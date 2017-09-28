@@ -6,15 +6,10 @@ extern crate hashglobe;
 extern crate smallvec;
 
 use hashglobe::FailedAllocationError;
+use hashglobe::alloc;
 use smallvec::Array;
 use smallvec::SmallVec;
 use std::vec::Vec;
-
-#[cfg(feature = "known_system_malloc")]
-extern "C" {
-    fn realloc(ptr: *mut u8, bytes: usize) -> *mut u8;
-    fn malloc(bytes: usize) -> *mut u8;
-}
 
 pub trait FallibleVec<T> {
     /// Append |val| to the end of |vec|.  Returns Ok(()) on success,
@@ -29,7 +24,6 @@ pub trait FallibleVec<T> {
 impl<T> FallibleVec<T> for Vec<T> {
     #[inline(always)]
     fn try_push(&mut self, val: T) -> Result<(), FailedAllocationError> {
-        #[cfg(feature = "known_system_malloc")]
         {
             if self.capacity() == self.len() {
                 try_double_vec(self)?;
@@ -43,7 +37,6 @@ impl<T> FallibleVec<T> for Vec<T> {
 
 // Double the capacity of |vec|, or fail to do so due to lack of memory.
 // Returns Ok(()) on success, Err(..) on failure.
-#[cfg(feature = "known_system_malloc")]
 #[inline(never)]
 #[cold]
 fn try_double_vec<T>(vec: &mut Vec<T>) -> Result<(), FailedAllocationError> {
@@ -67,9 +60,9 @@ fn try_double_vec<T>(vec: &mut Vec<T>) -> Result<(), FailedAllocationError> {
 
     let new_ptr = unsafe {
         if old_cap == 0 {
-            malloc(new_size_bytes)
+            alloc::alloc(new_size_bytes, 0)
         } else {
-            realloc(old_ptr as *mut u8, new_size_bytes)
+            alloc::realloc(old_ptr as *mut u8, new_size_bytes)
         }
     };
 
@@ -94,7 +87,6 @@ fn try_double_vec<T>(vec: &mut Vec<T>) -> Result<(), FailedAllocationError> {
 impl<T: Array> FallibleVec<T::Item> for SmallVec<T> {
     #[inline(always)]
     fn try_push(&mut self, val: T::Item) -> Result<(), FailedAllocationError> {
-        #[cfg(feature = "known_system_malloc")]
         {
             if self.capacity() == self.len() {
                 try_double_small_vec(self)?;
@@ -108,7 +100,6 @@ impl<T: Array> FallibleVec<T::Item> for SmallVec<T> {
 
 // Double the capacity of |svec|, or fail to do so due to lack of memory.
 // Returns Ok(()) on success, Err(..) on failure.
-#[cfg(feature = "known_system_malloc")]
 #[inline(never)]
 #[cold]
 fn try_double_small_vec<T>(svec: &mut SmallVec<T>)
@@ -146,12 +137,12 @@ where
         // There's an old block to free, and, presumably, old contents to
         // copy.  realloc takes care of both aspects.
         unsafe {
-            new_ptr = realloc(old_ptr as *mut u8, new_size_bytes);
+            new_ptr = alloc::realloc(old_ptr as *mut u8, new_size_bytes);
         }
     } else {
         // There's no old block to free.  There may be old contents to copy.
         unsafe {
-            new_ptr = malloc(new_size_bytes);
+            new_ptr = alloc::alloc(new_size_bytes, 0);
             if !new_ptr.is_null() && old_size_bytes > 0 {
                 copy_nonoverlapping(old_ptr as *const u8,
                                     new_ptr as *mut u8, old_size_bytes);
